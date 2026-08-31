@@ -61,7 +61,7 @@ export function layoutChord(shape, box) {
   for (const s of shape.open) markers.push({ s, kind: 'o', x: stringX[s], y: markerY, r: markerR });
   markers.sort((a, b) => a.s - b.s);
 
-  const dotR = cellW * 0.34;
+  const dotR = cellW * 0.38;
   const dots = shape.dots.map((d) => ({
     s: d.s,
     fret: d.fret,
@@ -199,9 +199,10 @@ export function drawChord(ctx, shape, box, opts) {
     ctx.strokeStyle = 'rgba(2,10,20,0.9)';
     ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-    if (showFingers && d.finger >= 1 && d.r >= 7) {
+    // Below ~6px a digit is unreadable anyway, so drop it rather than smear it.
+    if (showFingers && d.finger >= 1 && d.r >= 5.5) {
       ctx.fillStyle = '#0b1020';
-      ctx.font = `800 ${Math.round(d.r * 1.25)}px system-ui, sans-serif`;
+      ctx.font = `800 ${Math.round(d.r * 1.35)}px system-ui, sans-serif`;
       ctx.fillText(String(d.finger), d.x, d.y + d.r * 0.05);
     }
   }

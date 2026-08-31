@@ -1,12 +1,18 @@
 // Strum Fighter — 2D cockpit HUD overlay (canvas above the WebGL canvas).
 //
 // Draws the canopy frame/vignette, the center targeting reticle, the locked
-// enemy's chord name (big, top-center), score/wave/combo readouts, the hull
+// enemy's chord name (big, top-center), its chord diagram (right-hand card),
+// score/wave/combo readouts, the hull
 // integrity bar, an input-level meter, transient hit/miss flashes, a boss
 // shield bar, wave banners, bonus toasts, and the active-livery badge. Accent
 // colours follow the active livery (state.skin).
 
-export function createHud(container) {
+export function createHud(container, deps) {
+  // drawChord is injected rather than imported: a static import here would
+  // resolve without game.js's ?v=BUILD cache-buster and serve a stale module.
+  // Absent deps simply means no diagram, never an error.
+  const drawChord = (deps && deps.drawChord) || null;
+
   const canvas = document.createElement('canvas');
   canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none;z-index:2;';
   container.appendChild(canvas);
@@ -145,6 +151,17 @@ export function createHud(container) {
       ctx.strokeStyle = 'rgba(255,120,140,0.5)';
       ctx.lineWidth = 1.5;
       ctx.strokeRect(bx, by, bw, 12);
+    }
+
+    // ── Locked chord diagram (right-hand target card) ──
+    // Not top-center: that space holds the chord name at y=96 and, on boss
+    // waves, the shield bar at y=120 — a card that jumps aside when a boss
+    // warps in reads worse than one that never moves. The right column is
+    // empty in every game state, and leaves room for the NEXT card below.
+    if (drawChord && s.shape && s.shapeReveal > 0.001 && W >= 520 && H >= 420) {
+      const bw = Math.max(84, Math.min(150, W * 0.13));
+      drawChord(ctx, s.shape, { x: W - 28 - bw, y: 104, w: bw, lefty: !!s.lefty },
+        { reveal: s.shapeReveal, accent, alpha: 0.92, showFingers: bw >= 100 });
     }
 
     // ── Targeting bracket on the locked enemy (lock-on converge animation) ──

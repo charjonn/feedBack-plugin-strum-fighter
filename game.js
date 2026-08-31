@@ -9,7 +9,8 @@
 //
 // Architecture: this entry file loads Three.js (vendored in core) and the ES
 // modules under assets/modules/, then orchestrates the game loop. The modules:
-//   chords.js      — chord dictionary + difficulty tiers + boss progressions
+//   chords.js      — chord dictionary + shapes + difficulty tiers + boss progressions
+//   diagram.js     — progressive chord-box diagrams
 //   skins.js       — XP-gated cockpit liveries
 //   audio-input.js — strum-onset detection + scoreChord wrapper
 //   scene.js       — Three.js scene/camera/renderer/starfield/planet
@@ -25,7 +26,7 @@
   // Bump BUILD with every module change so a normal reload refetches the ES
   // modules (their import URLs are otherwise uncached). Keep in sync with
   // plugin.json "version".
-  const BUILD = '0.3.4';
+  const BUILD = '0.4.0';
   const MODULES = `/api/plugins/${PLUGIN_ID}/assets/modules/`;
   const mod = (name) => import(`${MODULES}${name}?v=${BUILD}`);
   // Three.js is vendored in core (pinned r170); fall back to CDN if absent.
@@ -103,10 +104,11 @@
     }
 
     // Load the rest of the modules in parallel.
-    let chords, skinsMod, sceneMod, enemiesMod, weaponsMod, hudMod, synthMod, ambianceMod;
+    let chords, diagramMod, skinsMod, sceneMod, enemiesMod, weaponsMod, hudMod, synthMod, ambianceMod;
     try {
-      [chords, skinsMod, sceneMod, enemiesMod, weaponsMod, hudMod, synthMod, ambianceMod] = await Promise.all([
+      [chords, diagramMod, skinsMod, sceneMod, enemiesMod, weaponsMod, hudMod, synthMod, ambianceMod] = await Promise.all([
         mod('chords.js'),
+        mod('diagram.js'),
         mod('skins.js'),
         mod('scene.js'),
         mod('enemies.js'),
@@ -132,10 +134,16 @@
     let labelMode = ['on', 'fade', 'off'].includes(modifiers.labels) ? modifiers.labels : 'on';
     let chordSoundOn = (modifiers.chord_sound || 'off') === 'on';
     if (labelMode === 'off') chordSoundOn = true;
+    // Chord shapes: 'reveal' draws the grip in as the fighter closes, so you
+    // get a beat to recall it before the answer arrives. In pure ear-only play
+    // the diagram would simply BE the answer, so it is forced off there.
+    let shapeMode = ['off', 'reveal', 'on'].includes(modifiers.shape) ? modifiers.shape : 'reveal';
+    if (labelMode === 'off') shapeMode = 'off';
     // Write the sanitized/forced values back so the run record + analytics
     // (sdk.end uses modifiers) reflect what the player actually experienced.
     modifiers.labels = labelMode;
     modifiers.chord_sound = chordSoundOn ? 'on' : 'off';
+    modifiers.shape = shapeMode;
     const bossWaveSet = chords.bossWaves(totalWaves, tier.bossEvery);
     // Escorts that fly with a boss, by difficulty.
     const ESCORTS = { easy: 0, medium: 2, hard: 3 };
@@ -165,7 +173,7 @@
     const weapons = weaponsMod.createWeapons(THREE, scene.scene, scene.camera);
     weapons.setSkin(skin);
     enemies.setLabelMode(labelMode);
-    const hud = hudMod.createHud(container);
+    const hud = hudMod.createHud(container, { drawChord: diagramMod.drawChord });
     const synth = synthMod.createSynth();
     synth.setEnabled(musicOn);
     synth.setCueEnabled(chordSoundOn);
@@ -188,7 +196,10 @@
     let strums = 0, hits = 0;
     let locked = null, lockedRef = null, lockId = 0, lockCueAt = 0;
     let lastVerdict = null, comboAt = 0, banner = null, toast = null, reveal = null;
-    const FADE_NEAR_Z = -45; // depth where a faded chord label hits zero
+    const FADE_NEAR_Z = -45;   // depth where a faded chord label hits zero
+    const SHAPE_FULL_Z = -70;  // depth where the chord diagram is fully drawn
+    const BOSS_REVEAL_MS = 4000; // a holding boss reveals its shape on time
+    let bossPlateAt = 0;       // when the boss's current shield plate came up
 
     // Enemy "voices" its chord, panned by screen-x and louder when nearer.
     function cueLocked(e) {
@@ -201,6 +212,16 @@
       if (synth.cueChord(e.chordNotes, { pan, gain })) lockCueAt = performance.now();
     }
 
+    // Distance ramp: 1 at SPAWN_Z, 0 at FADE_NEAR_Z. The chord letter fades OUT
+    // along it and the diagram fades IN, so labels:fade + shape:reveal hands
+    // the target off from the letter to the shape.
+    function nearRamp(e, zeroAt) {
+      if (!e) return 1;
+      const z0 = zeroAt != null ? zeroAt : FADE_NEAR_Z;
+      const a = (z0 - e.group.position.z) / (z0 - sceneMod.SPAWN_Z);
+      return Math.max(0, Math.min(1, a));
+    }
+
     // Alpha for the HUD's locked-chord letters (top-center + bracket).
     function lockedLabelAlpha(e) {
       if (!e) return 0;
@@ -208,8 +229,29 @@
       // Reached only when mode is 'fade'/'off' ('on' returned above); bosses
       // always hide their chord letters in those modes.
       if (labelMode === 'off' || e.boss) return 0;
-      const a = (FADE_NEAR_Z - e.group.position.z) / (FADE_NEAR_Z - sceneMod.SPAWN_Z);
-      return Math.max(0, Math.min(1, a));
+      return nearRamp(e);
+    }
+
+    // How much of the locked chord's diagram is drawn.
+    function shapeReveal(e) {
+      if (!e || shapeMode === 'off') return 0;
+      if (shapeMode === 'on') return 1;
+      // A boss holds at a fixed distance, so its distance ramp never moves —
+      // reveal on time since the current shield plate came up instead.
+      if (e.boss) return Math.max(0, Math.min(1, (performance.now() - bossPlateAt) / BOSS_REVEAL_MS));
+      // Complete at SHAPE_FULL_Z rather than FADE_NEAR_Z: the latter is also
+      // FIRE_Z, where the fighter shoots and peels off, so a diagram that
+      // finished there would finish exactly when it stopped being useful.
+      return 1 - nearRamp(e, SHAPE_FULL_Z);
+    }
+
+    // Cached per chord name: shapeOf allocates arrays and the HUD asks every frame.
+    const shapeCache = new Map();
+    function shapeForLocked(e) {
+      if (!e || shapeMode === 'off') return null;
+      const name = e.chordName;
+      if (!shapeCache.has(name)) shapeCache.set(name, chords.shapeOf(name));
+      return shapeCache.get(name);
     }
 
     // Flash the chord name at a kill (ear-training answer); no-op in 'on' mode.
@@ -245,6 +287,7 @@
         const prog = chords.bossProgression(difficulty);
         const boss = enemies.spawnBoss(prog);
         boss.bossSpeed = tier.bossSpeed;
+        bossPlateAt = performance.now();
         scene.setAlert(true);
         scene.setWarp(130);
         synth.setIntensity(1);
@@ -306,6 +349,7 @@
           } else {
             score += Math.round(150 * combo * acc);
             weapons.shieldHit(r.pos);
+            bossPlateAt = performance.now(); // next plate's shape starts from scratch
             synth.explosion();
             scene.addShake(0.35);
             hud.flash('hit');
@@ -480,6 +524,8 @@
         level: audio.getLevel(),
         lockedScreen, lockKey: lockId, verdict: lastVerdict, toast, banner, reveal,
         lockedLabelAlpha: lockedLabelAlpha(locked),
+        shape: shapeForLocked(locked),
+        shapeReveal: shapeReveal(locked),
         cueAt: chordSoundOn ? lockCueAt : 0,
         skin: { accent: skin.accent, badge: skin.badge, label: skin.label },
       });
@@ -527,6 +573,7 @@
       { id: 'length', label: 'Waves', default: 'normal', values: ['short', 'normal', 'long'] },
       { id: 'livery', label: 'Livery', default: 'auto', values: ['auto', 'default', 'ace', 'squad'] },
       { id: 'labels', label: 'Chord labels', default: 'on', values: ['on', 'fade', 'off'] },
+      { id: 'shape', label: 'Chord diagram', default: 'reveal', values: ['reveal', 'on', 'off'] },
       { id: 'chord_sound', label: 'Enemy chord sound', default: 'off', values: ['off', 'on'] },
       { id: 'music', label: 'Music', default: 'on', values: ['on', 'off'] },
     ],

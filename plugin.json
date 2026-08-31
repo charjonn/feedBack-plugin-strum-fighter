@@ -1,7 +1,7 @@
 {
   "id": "strum_fighter",
   "name": "Strum Fighter",
-  "version": "0.3.4",
+  "version": "0.4.0",
   "private": false,
   "script": "game.js",
   "minigame": {
@@ -49,6 +49,16 @@
         "values": [
           "on",
           "fade",
+          "off"
+        ]
+      },
+      {
+        "id": "shape",
+        "label": "Chord diagram",
+        "default": "reveal",
+        "values": [
+          "reveal",
+          "on",
           "off"
         ]
       },
