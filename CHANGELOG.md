@@ -3,6 +3,59 @@
 All notable changes to Strum Fighter are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.0] — 2026-08-31
+
+Learn the shape, not just the letter — and drill a song from your own library.
+
+### Added
+- **Chord diagrams that fill in as you fly.** The locked chord's shape is drawn as a chord box
+  in the HUD, one finger at a time, low string to high — the order you actually place the grip.
+  It opens as an empty grid, then shows which strings are played and muted, then the fretted
+  dots, so you get a beat to recall the chord before the answer arrives. Barres grow in with
+  their strings, and a shape further up the neck captions its base fret. New **Chord diagram**
+  modifier (`reveal` / `on` / `off`).
+- **Song mode.** Pick one of your own songs from the new **Track** row and the run drills its
+  chords: fighters carry them in scheduled order, and the boss wears the song's real progression
+  in playing order, taking a later slice each time so a long song isn't reduced to its opening
+  bars. Chord shapes come from the song's own chart, so you play and see the voicing the song
+  uses. Songs are read from the host's library API — favourites first, then recent — limited to
+  standard tuning and to charts that carry usable chord shapes.
+- **Spaced repetition.** Chords are scheduled by how well you actually know them rather than
+  drawn uniformly: miss one and it returns soon and often, land it cleanly several times and it
+  fades into the background. A miss costs two boxes while a hit earns one, and a scrappy hit
+  only promotes on a second one, so barely scraping through never reads as mastery. History is
+  kept per song (or per difficulty pool) between runs, and decays if you stay away. It drives
+  selection in song and practice mode; a plain scored run keeps its original random draw.
+- **The diagram follows your mastery.** A chord you keep losing shows its grip almost
+  immediately; one you've earned shows little more than the grid. The game gives exactly as much
+  help as you need and takes it back as you stop needing it.
+- **Practice mode.** No hull damage, no waves, no boss — the run is on a clock instead (the
+  Length modifier reads as 2 / 5 / 10 minutes). A wrong chord still flashes and still breaks the
+  combo; it just doesn't end the session you're learning in. New **Mode** modifier.
+- **A report worth reading.** The run summary gains a per-chord table (attempts, hit rate,
+  mastery), your weakest chords, and your slowest chord changes (`Am → F: 2.4s`). Change times
+  count only clean first-attempt hits and are measured from the previously *hit* chord, so they
+  describe real changes rather than the reticle reshuffling.
+
+### Changed
+- **The chord diagram is on by default** (`shape: reveal`). This is the one place where the
+  default run differs from 0.4.x and earlier: the game now teaches the shape rather than only
+  testing the name. `shape: off` restores the previous behaviour exactly.
+- The **Waves** modifier is now labelled **Length**, since it means minutes in practice mode.
+
+### Fixed
+- **Long chord names no longer run off their label.** At 84px even a built-in name like `Cmaj7`
+  overflowed the 256px enemy sprite. Both the sprite label and the HUD's big chord name now
+  shrink to fit — which matters more now that names can come from a chart and be anything.
+
+### Notes
+- Song mode, and the whole library path, is best-effort: a browser build, an unreachable host,
+  or a library with nothing playable leaves the Track row absent and the game plays its
+  difficulty pools exactly as before.
+- Spaced repetition uses `localStorage`, since the minigames SDK exposes no storage API. It is
+  treated as optional: if it's unavailable or throws, the run has no history rather than no
+  scheduler, and it is written between strums rather than on the gameplay path.
+
 ## [0.3.4] — 2026-06-27
 
 ### Fixed

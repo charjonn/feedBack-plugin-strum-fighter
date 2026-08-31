@@ -459,7 +459,7 @@
       // this writes occasionally rather than per strum.
       if (srs.shouldSave()) srs.save();
 
-      if (result && result.isHit) {
+      if (landed) {
         hits++;
         const acc = 0.5 + 0.5 * (typeof result.score === 'number' ? result.score : 1);
         weapons.fire(pos, true);
