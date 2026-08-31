@@ -254,6 +254,36 @@ test('srs module', async (t) => {
         assert.equal(mv.mastered + mv.learning + mv.slipped, 3);
     });
 
+    await t.test('the run report counts this run, not the whole history', async () => {
+        const store = memoryAdapter();
+        const first = mk({ storage: store });
+        await first.hydrate();
+        for (let i = 0; i < 4; i++) first.record('A', { isHit: true, score: 1 });
+        first.record('B', { isHit: false });
+        first.record('C', { isHit: false });
+        await first.save();
+
+        // A second run in which only 'A' is played, once, and missed.
+        const second = mk({ storage: store });
+        assert.equal(await second.hydrate(), true);
+        assert.equal(second.stateOf('A').hits, 4, 'lifetime history is restored');
+        second.record('A', { isHit: false });
+
+        const table = second.table();
+        assert.deepEqual(table.map(r => r.name), ['A'],
+            'chords not played this run should not be listed');
+        assert.equal(table[0].seen, 1, 'Tried counts this run only');
+        assert.equal(table[0].hits, 0);
+        assert.equal(table[0].misses, 1);
+        // The box still reflects everything the scheduler knows, which is the
+        // whole reason history is kept.
+        assert.equal(table[0].box, second.stateOf('A').box);
+        assert.deepEqual(second.weakest(3).map(r => r.name), ['A']);
+        const mv = second.movement();
+        assert.equal(mv.mastered + mv.learning + mv.slipped, 1);
+        assert.equal(mv.slipped, 1, 'A fell from where it started this run');
+    });
+
     await t.test('setChords swaps the active set without losing history', () => {
         const srs = mk();
         srs.record('A', { isHit: true, score: 1 });

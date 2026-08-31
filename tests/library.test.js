@@ -222,6 +222,30 @@ test('library module', async (t) => {
         assert.equal(await L.loadChart(null, { WebSocketImpl: fakeSocket([]), location: LOC }), null);
     });
 
+    await t.test('filenames are encoded so the URL cannot end early', async () => {
+        // Real library paths carry characters that would otherwise terminate
+        // the URL: '#' starts a fragment and '?' a query, so the server would
+        // be asked for a different song and the track would silently fall back
+        // to the generic pool.
+        let seen = null;
+        const Capture = class {
+            constructor(url) { seen = url; setTimeout(() => this.onclose && this.onclose(), 0); }
+            close() {}
+        };
+        const grab = async (filename) => {
+            await L.loadChart({ filename, arrangement: 0 }, { WebSocketImpl: Capture, location: LOC });
+            return seen;
+        };
+        assert.ok((await grab('Pixies/Where Is My Mind?.sloppak'))
+            .includes('/ws/highway/Pixies/Where%20Is%20My%20Mind%3F.sloppak?arrangement=0'));
+        assert.ok((await grab('X/Song #1.sloppak'))
+            .includes('/ws/highway/X/Song%20%231.sloppak?arrangement=0'));
+        // Separators stay separators — the filename is a path, not one segment.
+        assert.ok((await grab('A/B/c.sloppak')).includes('/ws/highway/A/B/c.sloppak?'));
+        // Exactly one '?' in the URL, so the arrangement is still a query param.
+        assert.equal((await grab('Q?/w?.sloppak')).split('?').length - 1, 1);
+    });
+
     await t.test('loadSong turns a chart into a drillable set', async () => {
         const WebSocketImpl = fakeSocket([
             { type: 'chord_templates', data: TEMPLATES },

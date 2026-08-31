@@ -29,7 +29,7 @@
   // Bump BUILD with every module change so a normal reload refetches the ES
   // modules (their import URLs are otherwise uncached). Keep in sync with
   // plugin.json "version".
-  const BUILD = '0.5.0';
+  const BUILD = '0.5.1';
   const MODULES = `/api/plugins/${PLUGIN_ID}/assets/modules/`;
   const mod = (name) => import(`${MODULES}${name}?v=${BUILD}`);
   // Three.js is vendored in core (pinned r170); fall back to CDN if absent.
@@ -539,6 +539,8 @@
       // both "which chords do I miss" and "which ones am I slow to reach".
       const changeByChord = new Map();
       for (const c of timing.chordStats()) changeByChord.set(c.name, reportMod.fmtMs(c.medMs));
+      // srs.table() is already scoped to this run; the box it carries is the
+      // standing mastery, which is what the pips are for.
       const chordRows = srs.table().map((r) => Object.assign({}, r, { change: changeByChord.get(r.name) }));
       const changes = timing.changeStats();
       const weakest = srs.weakest(3);

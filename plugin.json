@@ -1,7 +1,7 @@
 {
   "id": "strum_fighter",
   "name": "Strum Fighter",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": false,
   "script": "game.js",
   "minigame": {

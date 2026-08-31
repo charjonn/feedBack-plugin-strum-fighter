@@ -191,7 +191,14 @@ export function loadChart(song, opts) {
     try {
       const proto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
       const arr = song.arrangement != null ? song.arrangement : -1;
-      ws = new WS(`${proto}//${loc.host}/ws/highway/${song.filename}?arrangement=${arr}`);
+      // Encode each path SEGMENT, keeping the separators: a filename is a
+      // DLC-relative path, and real ones carry characters that would otherwise
+      // end the URL early — "Song #1" would truncate at the '#', and
+      // "Where Is My Mind?" would start a query string. The server would then
+      // be asked for a different song, and the track would silently fall back
+      // to the generic pool.
+      const path = String(song.filename).split('/').map(encodeURIComponent).join('/');
+      ws = new WS(`${proto}//${loc.host}/ws/highway/${path}?arrangement=${arr}`);
     } catch (_e) {
       return resolve(null);
     }

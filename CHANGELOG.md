@@ -3,6 +3,20 @@
 All notable changes to Strum Fighter are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.1] — 2026-08-31
+
+### Fixed
+- **Songs whose filename contains `#` or `?` silently fell back to the generic pool.** The
+  chart WebSocket URL interpolated the library filename raw, so `Song #1` truncated at the
+  fragment and `Where Is My Mind?` started a query string — the host was asked for a different
+  song, found nothing, and the picked track quietly reverted to the difficulty pool. Path
+  segments are now encoded, separators kept.
+- **The run summary mixed lifetime totals with session timings.** Restored history meant the
+  per-chord Tried/Hit columns counted every previous run, and the table listed chords the
+  player never met this session, while the change times beside them were session-only. The
+  report is now scoped to the run; the mastery pips still show the standing box, which is what
+  the remembered history is for.
+
 ## [0.5.0] — 2026-08-31
 
 Learn the shape, not just the letter — and drill a song from your own library.

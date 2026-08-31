@@ -33,6 +33,10 @@ function blankState() {
   return {
     box: 0, seen: 0, hits: 0, misses: 0, streak: 0, lapses: 0,
     avgScore: null, lastTick: 0, dueTick: 0, startBox: 0,
+    // Counted for THIS run only, never restored from storage: the end-of-run
+    // report is about the run, and mixing lifetime totals into it alongside
+    // session-only timings reads as one set of numbers when it is two.
+    runSeen: 0, runHits: 0, runMisses: 0,
   };
 }
 
@@ -147,17 +151,20 @@ export function createSrs(opts) {
     const q = clamp01(Number.isFinite(raw) ? raw : (isHit ? 1 : 0));
 
     st.seen++;
+    st.runSeen++;
     st.lastTick = tick;
     st.avgScore = st.avgScore == null ? q : st.avgScore + (q - st.avgScore) * 0.3;
 
     if (isHit) {
       st.hits++;
+      st.runHits++;
       st.streak++;
       // A clean hit promotes; a scrappy one has to be repeated, so barely
       // scraping through never reads as mastery.
       if (q >= PROMOTE_Q || st.streak >= 2) st.box = Math.min(BOXES - 1, st.box + 1);
     } else {
       st.misses++;
+      st.runMisses++;
       st.streak = 0;
       if (st.box > 0) st.lapses++;
       st.box = Math.max(0, st.box - DEMOTE_STEP);
@@ -261,17 +268,22 @@ export function createSrs(opts) {
   }
 
   // ── Reporting ──
+  //
+  // Scoped to what was actually played this run. Restored history still sets
+  // the box each chord stands in — that is the point of remembering it — but a
+  // run summary should not list chords the player never met, nor count last
+  // week's attempts among this session's.
   function seenList() {
     return active
       .map((name) => ({ name, st: stateOf(name) }))
-      .filter((e) => e.st && e.st.seen > 0);
+      .filter((e) => e.st && e.st.runSeen > 0);
   }
 
   function weakest(n) {
     return seenList()
       .map((e) => ({
-        name: e.name, box: e.st.box, hits: e.st.hits, misses: e.st.misses,
-        seen: e.st.seen, avgScore: e.st.avgScore, mastery: mastery(e.name),
+        name: e.name, box: e.st.box, hits: e.st.runHits, misses: e.st.runMisses,
+        seen: e.st.runSeen, avgScore: e.st.avgScore, mastery: mastery(e.name),
       }))
       .sort((a, b) => a.mastery - b.mastery || b.misses - a.misses)
       .slice(0, n || 3);
@@ -291,8 +303,8 @@ export function createSrs(opts) {
   function table() {
     return seenList()
       .map((e) => ({
-        name: e.name, box: e.st.box, seen: e.st.seen, hits: e.st.hits,
-        misses: e.st.misses, avgScore: e.st.avgScore, mastery: mastery(e.name),
+        name: e.name, box: e.st.box, seen: e.st.runSeen, hits: e.st.runHits,
+        misses: e.st.runMisses, avgScore: e.st.avgScore, mastery: mastery(e.name),
       }))
       .sort((a, b) => a.mastery - b.mastery || b.seen - a.seen);
   }
