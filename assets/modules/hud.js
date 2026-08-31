@@ -2,7 +2,7 @@
 //
 // Draws the canopy frame/vignette, the center targeting reticle, the locked
 // enemy's chord name (big, top-center), its chord diagram (right-hand card),
-// score/wave/combo readouts, the hull
+// score/wave/combo readouts, the hull (or the practice clock)
 // integrity bar, an input-level meter, transient hit/miss flashes, a boss
 // shield bar, wave banners, bonus toasts, and the active-livery badge. Accent
 // colours follow the active livery (state.skin).
@@ -115,7 +115,15 @@ export function createHud(container, deps) {
       ctx.font = '700 16px system-ui, sans-serif';
       ctx.fillStyle = 'rgba(180,210,240,0.8)';
       ctx.fillText(s.lockedIsBoss ? 'PEEL' : 'STRUM', cx, 44);
-      ctx.font = '900 60px Arial Black, system-ui, sans-serif';
+      // Song chord names come out of the player's chart and can be long, so
+      // fit the name to the space instead of letting it run under the HUD.
+      let nameSize = 60;
+      const maxNameW = Math.min(W - 220, 420);
+      do {
+        ctx.font = `900 ${nameSize}px Arial Black, system-ui, sans-serif`;
+        if (ctx.measureText(s.locked).width <= maxNameW) break;
+        nameSize -= 4;
+      } while (nameSize > 22);
       ctx.fillStyle = '#ffe14d';
       ctx.shadowColor = 'rgba(255,220,60,0.6)'; ctx.shadowBlur = 16;
       ctx.fillText(s.locked, cx, 96);
@@ -221,7 +229,8 @@ export function createHud(container, deps) {
     ctx.fillText(String(s.score | 0), 28, 44);
     ctx.font = '600 13px system-ui, sans-serif';
     ctx.fillStyle = 'rgba(180,210,240,0.75)';
-    ctx.fillText(`WAVE ${s.wave}/${s.waveCount}`, 28, 64);
+    // Practice has no waves to count, so the readout names the mode instead.
+    ctx.fillText(s.practice ? 'PRACTICE' : `WAVE ${s.wave}/${s.waveCount}`, 28, 64);
 
     // ── Combo (top-right) ──
     if (s.combo > 1) {
@@ -236,14 +245,22 @@ export function createHud(container, deps) {
       ctx.restore();
     }
 
-    // ── Hull bar (bottom-center) ──
+    // ── Hull, or the session clock in practice (bottom-center) ──
+    // Practice takes no hull damage, so a full green bar would say nothing.
+    // The one number that matters there is how long is left.
     const bw2 = Math.min(280, W * 0.5), bx2 = cx - bw2 / 2, by2 = H - 40;
     ctx.textAlign = 'left';
     ctx.font = '600 12px system-ui, sans-serif';
     ctx.fillStyle = 'rgba(180,210,240,0.75)';
-    ctx.fillText('HULL', bx2, by2 - 6);
-    const hullFrac = s.hull / s.hullMax;
-    roundedBar(bx2, by2, bw2, 12, hullFrac, hullFrac > 0.33 ? '#54e0a0' : '#ff5566');
+    if (s.practice) {
+      ctx.fillText('TIME', bx2, by2 - 6);
+      const left = Math.max(0, Math.min(1, s.timeLeftFrac || 0));
+      roundedBar(bx2, by2, bw2, 12, left, left > 0.15 ? `rgba(${accent},0.9)` : '#ffb454');
+    } else {
+      ctx.fillText('HULL', bx2, by2 - 6);
+      const hullFrac = s.hull / s.hullMax;
+      roundedBar(bx2, by2, bw2, 12, hullFrac, hullFrac > 0.33 ? '#54e0a0' : '#ff5566');
+    }
 
     // ── Input level meter (bottom-left) ──
     const lw = 120, lx = 28, ly = H - 40;

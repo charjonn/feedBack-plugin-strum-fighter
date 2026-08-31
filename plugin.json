@@ -1,7 +1,7 @@
 {
   "id": "strum_fighter",
   "name": "Strum Fighter",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": false,
   "script": "game.js",
   "minigame": {
@@ -22,8 +22,17 @@
         ]
       },
       {
+        "id": "mode",
+        "label": "Mode",
+        "default": "run",
+        "values": [
+          "run",
+          "practice"
+        ]
+      },
+      {
         "id": "length",
-        "label": "Waves",
+        "label": "Length",
         "default": "normal",
         "values": [
           "short",

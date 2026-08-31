@@ -71,28 +71,6 @@ export function localStorageAdapter(ns, win) {
   };
 }
 
-// Writes to both, reads primary then secondary. Whichever store turns out to
-// be real carries the data, so we never have to be sure in advance which one
-// works in this host.
-export function dualAdapter(primary, secondary) {
-  if (!primary && !secondary) return memoryAdapter();
-  if (!primary) return secondary;
-  if (!secondary) return primary;
-  return {
-    async get(k) {
-      const a = await primary.get(k);
-      if (a != null) return a;
-      return secondary.get(k);
-    },
-    async set(k, v) {
-      const a = await primary.set(k, v);
-      const b = await secondary.set(k, v);
-      return !!(a || b);
-    },
-    async remove(k) { await primary.remove(k); await secondary.remove(k); },
-  };
-}
-
 // ── Scheduler ─────────────────────────────────────────────────────────────
 
 export function createSrs(opts) {

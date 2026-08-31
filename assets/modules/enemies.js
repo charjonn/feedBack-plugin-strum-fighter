@@ -19,7 +19,16 @@ function makeLabelTexture(T, text, cache) {
   c.width = 256; c.height = 128;
   const ctx = c.getContext('2d');
   ctx.clearRect(0, 0, c.width, c.height);
-  ctx.font = '900 84px Arial Black, Arial, sans-serif';
+  // Shrink to fit rather than run off the sprite. Even a built-in name like
+  // "Cmaj7" overflows at the full size, and song mode takes chord names
+  // straight from the chart, where they can be anything at all.
+  let size = 84;
+  const MAX_W = c.width - 24;
+  do {
+    ctx.font = `900 ${size}px Arial Black, Arial, sans-serif`;
+    if (ctx.measureText(text).width <= MAX_W) break;
+    size -= 6;
+  } while (size > 24);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.lineJoin = 'round';

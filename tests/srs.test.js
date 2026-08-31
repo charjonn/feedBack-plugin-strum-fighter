@@ -19,7 +19,7 @@ function lcg(seed) {
 
 test('srs module', async (t) => {
     const S = await import(MOD);
-    const { createSrs, memoryAdapter, dualAdapter, BOXES, INTERVAL, SRS_VERSION } = S;
+    const { createSrs, memoryAdapter, BOXES, INTERVAL, SRS_VERSION } = S;
 
     const mk = (over) => createSrs(Object.assign({
         chords: ['A', 'B', 'C', 'D'],
@@ -224,26 +224,6 @@ test('srs module', async (t) => {
         assert.equal(await none.hydrate(), false);
         assert.equal(await none.save(), false);
         assert.ok(none.pick());
-    });
-
-    await t.test('dualAdapter writes to both and reads whichever answers', async () => {
-        const a = memoryAdapter(), b = memoryAdapter();
-        const d = dualAdapter(a, b);
-        await d.set('k', 'v');
-        assert.equal(await a.get('k'), 'v');
-        assert.equal(await b.get('k'), 'v');
-        // Primary wins when both hold a value.
-        await a.set('k', 'primary');
-        assert.equal(await d.get('k'), 'primary');
-        // A gap in the primary falls through to the secondary.
-        await a.remove('k');
-        assert.equal(await d.get('k'), 'v');
-        // A missing side is simply the other one.
-        assert.equal(await dualAdapter(null, b).get('k'), 'v');
-        assert.equal(await dualAdapter(a, null).get('k'), null);
-        const mem = dualAdapter(null, null);
-        await mem.set('x', '1');
-        assert.equal(await mem.get('x'), '1');
     });
 
     await t.test('recording a chord outside the active set is harmless', () => {

@@ -11,6 +11,9 @@
 // modules under assets/modules/, then orchestrates the game loop. The modules:
 //   chords.js      — chord dictionary + shapes + difficulty tiers + boss progressions
 //   diagram.js     — progressive chord-box diagrams
+//   library.js     — the player's own songs, read from the host API
+//   srs.js         — spaced repetition over the active chord set
+//   report.js      — chord-change timing + the end-of-run summary
 //   skins.js       — XP-gated cockpit liveries
 //   audio-input.js — strum-onset detection + scoreChord wrapper
 //   scene.js       — Three.js scene/camera/renderer/starfield/planet
@@ -26,7 +29,7 @@
   // Bump BUILD with every module change so a normal reload refetches the ES
   // modules (their import URLs are otherwise uncached). Keep in sync with
   // plugin.json "version".
-  const BUILD = '0.4.0';
+  const BUILD = '0.5.0';
   const MODULES = `/api/plugins/${PLUGIN_ID}/assets/modules/`;
   const mod = (name) => import(`${MODULES}${name}?v=${BUILD}`);
   // Three.js is vendored in core (pinned r170); fall back to CDN if absent.
@@ -63,6 +66,9 @@
   }
 
   let runState = null;
+  // The player's own songs, offered as the hub's "Track" row. Filled in the
+  // background after registration; startGame() looks the choice back up here.
+  let trackList = [];
 
   function panel(container, html) {
     container.style.background = 'radial-gradient(circle at 50% 40%, #0b1430, #05060d)';
@@ -104,11 +110,16 @@
     }
 
     // Load the rest of the modules in parallel.
-    let chords, diagramMod, skinsMod, sceneMod, enemiesMod, weaponsMod, hudMod, synthMod, ambianceMod;
+    let chords, diagramMod, libraryMod, srsMod, reportMod,
+      skinsMod, sceneMod, enemiesMod, weaponsMod, hudMod, synthMod, ambianceMod;
     try {
-      [chords, diagramMod, skinsMod, sceneMod, enemiesMod, weaponsMod, hudMod, synthMod, ambianceMod] = await Promise.all([
+      [chords, diagramMod, libraryMod, srsMod, reportMod,
+        skinsMod, sceneMod, enemiesMod, weaponsMod, hudMod, synthMod, ambianceMod] = await Promise.all([
         mod('chords.js'),
         mod('diagram.js'),
+        mod('library.js'),
+        mod('srs.js'),
+        mod('report.js'),
         mod('skins.js'),
         mod('scene.js'),
         mod('enemies.js'),
@@ -126,8 +137,16 @@
     // ── Config from modifiers ──
     const difficulty = modifiers.difficulty || 'medium';
     const tier = chords.tierParams(difficulty);
-    const chordPool = chords.pool(difficulty);
     const totalWaves = chords.waveCount(modifiers.length || 'normal');
+    // Practice: no hull damage, no waves, no boss — the run ends on the clock.
+    // Being punished while you are still learning a shape is exactly what
+    // pushes the chords you most need to drill out of the run.
+    const practice = (modifiers.mode || 'run') === 'practice';
+    modifiers.mode = practice ? 'practice' : 'run';
+    // In practice the wave-count modifier reads as a DURATION instead: the run
+    // needs an end, because cleanup() never calls sdk.end() on its own.
+    const PRACTICE_MIN = { short: 2, normal: 5, long: 10 };
+    const practiceMs = (PRACTICE_MIN[modifiers.length] || 5) * 60000;
     const musicOn = (modifiers.music || 'on') !== 'off';
     // Ear-training: label visibility + whether enemies voice their chord. With
     // labels fully off there'd be no cue at all, so force the chord sound on.
@@ -157,6 +176,64 @@
       skin = skinsMod.resolveSkin(modifiers.livery || 'auto', owned);
     } catch (_e) { /* offline / no profile — keep default livery */ }
 
+    // ── Song mode: drill the chords of one of the player's own songs ──
+    //
+    // The hub's Track row is populated from /api/library at load (see the
+    // registration block at the bottom of this file) and hands the choice back
+    // as modifiers.__track. Loading the chart talks to the host over a
+    // WebSocket and can take a moment, so say so rather than showing a blank
+    // cockpit — and if anything at all goes wrong, fall through to the
+    // difficulty pool rather than failing the run.
+    let song = null;
+    const trackId = modifiers.__track;
+    if (trackId) {
+      const entry = trackList.find((tr) => tr.id === trackId);
+      if (entry) {
+        panel(container, `<div style="font-size:34px;margin-bottom:10px">🛰</div>` +
+          `<div style="font-size:18px;opacity:.85">Reading the chart for ` +
+          `<b>${reportMod.esc(entry.title)}</b>…</div>`);
+        try {
+          song = await libraryMod.loadSong(entry);
+        } catch (_e) { song = null; }
+        if (!song) console.debug('[strum_fighter] no usable chords in', entry.filename);
+      }
+    }
+    modifiers.song = song ? song.title : 'off';
+
+    // Every chord the run can serve, keyed by the name shown on the enemy:
+    // its notes for the scorer and its shape for the diagram. In song mode
+    // these come from the song's own chord templates, so a song chord is
+    // played and drawn exactly as the chart specifies it and never has to be
+    // matched against the built-in dictionary.
+    const chordBook = new Map();
+    function addChord(name, frets, fingers) {
+      if (!name || chordBook.has(name)) return;
+      chordBook.set(name, {
+        name,
+        notes: chords.notesFromFrets(frets),
+        shape: chords.shapeFromFrets(name, frets, fingers),
+      });
+    }
+    let chordPool;
+    if (song) {
+      for (const c of song.chords) addChord(c.name, c.frets, c.fingers);
+      chordPool = song.chords.map((c) => c.name);
+    } else {
+      chordPool = chords.pool(difficulty);
+      for (const name of chordPool) addChord(name, chords.CHORDS[name], chords.FINGERS[name]);
+    }
+    // Boss plates can name chords the fighter pool never spawns.
+    for (const name of Object.keys(chords.CHORDS)) {
+      addChord(name, chords.CHORDS[name], chords.FINGERS[name]);
+    }
+
+    // The enemies module already takes a notes resolver, so making that one
+    // function song-aware is all song mode needs from it.
+    const notesFor = (name) => {
+      const entry = chordBook.get(name);
+      return entry ? entry.notes : chords.toNotes(name);
+    };
+
     container.style.background = '#05060d';
     container.innerHTML = '';
 
@@ -164,7 +241,7 @@
     const scene = sceneMod.createScene(THREE, container);
     scene.setSkin(skin);
     const enemies = enemiesMod.createEnemies(THREE, scene.scene, {
-      toNotes: chords.toNotes,
+      toNotes: notesFor,
       SPAWN_Z: sceneMod.SPAWN_Z,
       BREACH_Z: sceneMod.BREACH_Z,
       PLAY_HALF_W: sceneMod.PLAY_HALF_W,
@@ -178,6 +255,27 @@
     synth.setEnabled(musicOn);
     synth.setCueEnabled(chordSoundOn);
     const ambiance = ambianceMod.createAmbiance(THREE, scene.scene);
+
+    // ── Spaced repetition ──
+    //
+    // History is kept per song (or per difficulty pool), so drilling one song
+    // does not disturb what the game knows about another. The minigame SDK has
+    // no storage of its own, so this is localStorage — which the module treats
+    // as optional: if it is unavailable or throws, the run simply has no
+    // history rather than no scheduler.
+    const srsKey = song ? `song:${song.id}` : `pool:${difficulty}`;
+    const srs = srsMod.createSrs({
+      chords: chordPool,
+      key: srsKey,
+      storage: srsMod.localStorageAdapter('strum_fighter:srs:v1'),
+    });
+    await srs.hydrate();
+    // Where the player is deliberately practising, the scheduler picks. A plain
+    // scored run without a song keeps its original uniform-random draw, so the
+    // default game is unchanged. It still RECORDS everywhere, so the report and
+    // the mastery-driven diagram work from the first run.
+    const srsPicks = !!song || practice;
+    const timing = reportMod.createTimingLog();
 
     const audio = audioMod.createAudioInput({ onStrum: handleStrum, onLevel: null });
     audio.setScoreOpts({
@@ -242,16 +340,18 @@
       // Complete at SHAPE_FULL_Z rather than FADE_NEAR_Z: the latter is also
       // FIRE_Z, where the fighter shoots and peels off, so a diagram that
       // finished there would finish exactly when it stopped being useful.
-      return 1 - nearRamp(e, SHAPE_FULL_Z);
+      const ramp = 1 - nearRamp(e, SHAPE_FULL_Z);
+      // The help you get is the help you need. A chord that keeps slipping
+      // away shows its grip almost at once; one you have earned shows barely
+      // more than the grid, and fades out gradually rather than snapping off.
+      if (srs.isLeech(e.chordName)) return 1;
+      return Math.min(1, ramp * (2.2 - 2.0 * srs.mastery(e.chordName)));
     }
 
-    // Cached per chord name: shapeOf allocates arrays and the HUD asks every frame.
-    const shapeCache = new Map();
     function shapeForLocked(e) {
       if (!e || shapeMode === 'off') return null;
-      const name = e.chordName;
-      if (!shapeCache.has(name)) shapeCache.set(name, chords.shapeOf(name));
-      return shapeCache.get(name);
+      const entry = chordBook.get(e.chordName);
+      return entry ? entry.shape : null;
     }
 
     // Flash the chord name at a kill (ear-training answer); no-op in 'on' mode.
@@ -267,14 +367,18 @@
       };
     }
     let spawnedThisWave = 0, spawnAcc = 0, waveDamage = 0, runDamage = 0;
-    let escortTarget = 0, waveActive = false;
+    let escortTarget = 0, waveActive = false, bossCount = 0;
     let gameOver = false, ended = false;
     const startedAt = performance.now();
 
     function isBossWave(w) { return bossWaveSet.has(w); }
     function takeDamage(n) {
-      hull -= n; waveDamage += n; runDamage += n; combo = 1;
+      combo = 1;
       hud.flash('miss');
+      // Practice still tells you it went wrong; it just does not end the run
+      // over it.
+      if (practice) return;
+      hull -= n; waveDamage += n; runDamage += n;
       if (hull <= 0) { hull = 0; endRun('destroyed'); }
     }
     function awardToast(text) { toast = { text, at: performance.now() }; }
@@ -282,9 +386,28 @@
     function startWave() {
       waveActive = true;
       spawnedThisWave = 0; spawnAcc = 0; waveDamage = 0;
+      if (practice) {
+        // One endless wave: the spawner is capped on live enemies instead.
+        escortTarget = Infinity;
+        scene.setAlert(false);
+        scene.setWarp(90);
+        synth.setIntensity(0);
+        banner = { text: 'PRACTICE', sub: song ? song.title : null, at: performance.now(), boss: false };
+        return;
+      }
       if (isBossWave(wave)) {
         escortTarget = escortCount;
-        const prog = chords.bossProgression(difficulty);
+        // In song mode the boss is armoured by the song itself, in playing
+        // order — random-order drilling for the fighters, the real sequence
+        // for the boss. Successive bosses take successive slices, so a long
+        // song is not reduced to its opening bars.
+        let prog = null;
+        if (song) {
+          const slice = libraryMod.bossSliceOf(song.progression, bossCount, 6);
+          if (slice) prog = { name: song.title, chords: slice };
+        }
+        if (!prog) prog = chords.bossProgression(difficulty);
+        bossCount++;
         const boss = enemies.spawnBoss(prog);
         boss.bossSpeed = tier.bossSpeed;
         bossPlateAt = performance.now();
@@ -325,6 +448,16 @@
         result ? `isHit=${result.isHit} score=${(result.score || 0).toFixed(2)} ${result.hitStrings}/${result.totalStrings}` : 'null');
       if (gameOver || target.dead || target.dying) return;
       const pos = target.group.position.clone();
+      const landed = !!(result && result.isHit);
+
+      // One place for both branches, so boss plates count towards what the
+      // scheduler and the report know just as fighter kills do.
+      const at = performance.now();
+      timing.attempt(chordName, at, landed);
+      srs.record(chordName, { isHit: landed, score: result && result.score });
+      // The plugin spec forbids synchronous storage on a gameplay path, so
+      // this writes occasionally rather than per strum.
+      if (srs.shouldSave()) srs.save();
 
       if (result && result.isHit) {
         hits++;
@@ -357,6 +490,9 @@
             // Voice the boss's NEW current chord just after the strum-duck
             // window so the player hears the next plate's target.
             setTimeout(() => cueLocked(target), 320);
+            // The lock did not change, but the chord did — restart the clock so
+            // the next plate is timed as its own change.
+            timing.lock(target.chordName, performance.now());
             lastVerdict = { kind: 'hit', text: `${chordName} ✓  plate ${r.plateIdx}/${target.plates}`, at: performance.now() };
           }
         } else {
@@ -383,7 +519,10 @@
     }
 
     function spawnNext() {
-      const name = chordPool[(Math.random() * chordPool.length) | 0];
+      const name = srsPicks
+        ? srs.pick()
+        : chordPool[(Math.random() * chordPool.length) | 0];
+      if (!name) return;
       enemies.spawn(name);
       spawnedThisWave++;
     }
@@ -395,24 +534,44 @@
       raf = 0;
       const accuracy = strums > 0 ? Math.round((hits / strums) * 100) : 0;
       const won = reason === 'cleared';
-      const summaryHtml =
-        `<div>${won ? 'Sector cleared! ✦' : 'Cockpit breached.'}</div>` +
-        `<div style="margin-top:6px">Fighters downed: <b>${kills}</b></div>` +
-        `<div>Bosses destroyed: <b>${bossKills}</b></div>` +
-        `<div>Accuracy: <b>${accuracy}%</b></div>` +
-        `<div>Hull lost: <b>${runDamage}</b></div>` +
-        `<div>Reached wave: <b>${wave}/${totalWaves}</b></div>` +
-        `<div>Livery: <b>${skin.label}</b></div>` +
-        (labelMode !== 'on'
-          ? `<div>Ear training: <b>${labelMode === 'off' ? 'Ear-only' : 'Fade'}</b></div>`
-          : '');
+
+      // Fold the change times into the per-chord rows, so one table answers
+      // both "which chords do I miss" and "which ones am I slow to reach".
+      const changeByChord = new Map();
+      for (const c of timing.chordStats()) changeByChord.set(c.name, reportMod.fmtMs(c.medMs));
+      const chordRows = srs.table().map((r) => Object.assign({}, r, { change: changeByChord.get(r.name) }));
+      const changes = timing.changeStats();
+      const weakest = srs.weakest(3);
+      const movement = srs.movement();
+
+      const summaryHtml = reportMod.buildSummary({
+        won, practice, kills, bossKills, accuracy, hullLost: runDamage,
+        wave, totalWaves, livery: skin.label, labelMode,
+        songTitle: song ? song.title : null,
+        chords: chordRows, weakest, changes, movement,
+      });
+
+      // Last chance to keep what this run taught the scheduler.
+      srs.save();
+
       // sdk.end() calls spec.stop() → stopGame() → cleanup(), which disposes
       // all GL/audio resources, so we don't tear down here.
       sdk.end({
         score,
         durationMs: Math.round(performance.now() - startedAt),
         modifiers,
-        meta: { wave, kills, bossKills, accuracy, hullLost: runDamage, reason, difficulty, livery: skin.id, labels: labelMode, chordSound: chordSoundOn },
+        meta: {
+          wave, kills, bossKills, accuracy, hullLost: runDamage, reason, difficulty,
+          livery: skin.id, labels: labelMode, shape: shapeMode, chordSound: chordSoundOn,
+          mode: practice ? 'practice' : 'run',
+          song: song ? song.title : null,
+          songId: song ? song.id : null,
+          weakest: weakest.map((w) => w.name),
+          slowestChange: changes.length
+            ? { from: changes[0].from, to: changes[0].to, medMs: Math.round(changes[0].medMs) }
+            : null,
+          mastery: movement,
+        },
         summaryHtml,
       });
     }
@@ -427,7 +586,7 @@
         if (!waveActive) startWave();
 
         // Spawn escorts/fighters for the current wave.
-        if (spawnedThisWave < escortTarget) {
+        if (spawnedThisWave < escortTarget && (!practice || enemies.aliveCount() < 4)) {
           spawnAcc += dt * 1000;
           if (spawnAcc >= tier.spawnEveryMs) { spawnAcc = 0; spawnNext(); }
         }
@@ -443,6 +602,7 @@
         locked = enemies.nearest();
         if (locked !== lockedRef) {
           lockedRef = locked; lockId++;
+          timing.lock(locked ? locked.chordName : null, performance.now());
           cueLocked(locked); // announce the new target's chord
         } else if (locked && performance.now() - lockCueAt > 3500) {
           cueLocked(locked); // periodic reminder while still lined up
@@ -478,9 +638,12 @@
           }
         }
 
-        // Wave / win progression — wave ends once everything (incl. boss) is
-        // down and the escort quota has finished spawning.
-        if (!gameOver && spawnedThisWave >= escortTarget && enemies.aliveCount() === 0) {
+        // Practice has no waves to clear, so it runs until the clock does.
+        // Otherwise: a wave ends once everything (incl. the boss) is down and
+        // the escort quota has finished spawning.
+        if (practice) {
+          if (!gameOver && now - startedAt >= practiceMs) endRun('time');
+        } else if (!gameOver && spawnedThisWave >= escortTarget && enemies.aliveCount() === 0) {
           const flawless = waveDamage === 0;
           const clearBonus = 200 * wave + (flawless ? 300 : 0);
           score += clearBonus;
@@ -518,6 +681,8 @@
       const bossE = enemies.bossInPlay();
       hud.update({
         score, combo, comboAt, hull, hullMax: HULL_MAX, wave, waveCount: totalWaves,
+        practice,
+        timeLeftFrac: practice ? Math.max(0, 1 - (now - startedAt) / practiceMs) : 0,
         locked: locked ? locked.chordName : null,
         lockedIsBoss: !!(locked && locked.boss),
         boss: bossE ? { name: bossE.progName, idx: bossE.progIdx, plates: bossE.plates } : null,
@@ -563,21 +728,49 @@
   }
 
   // ── Register ──
-  postSpec({
+  const spec = {
     id: PLUGIN_ID,
     title: 'Strum Fighter',
     tagline: 'Strum the chord, kill the fighter',
     thumbnail: 'thumb.png',
     modifiers: [
       { id: 'difficulty', label: 'Difficulty', default: 'medium', values: ['easy', 'medium', 'hard'] },
-      { id: 'length', label: 'Waves', default: 'normal', values: ['short', 'normal', 'long'] },
+      { id: 'mode', label: 'Mode', default: 'run', values: ['run', 'practice'] },
+      { id: 'length', label: 'Length', default: 'normal', values: ['short', 'normal', 'long'] },
       { id: 'livery', label: 'Livery', default: 'auto', values: ['auto', 'default', 'ace', 'squad'] },
       { id: 'labels', label: 'Chord labels', default: 'on', values: ['on', 'fade', 'off'] },
       { id: 'shape', label: 'Chord diagram', default: 'reveal', values: ['reveal', 'on', 'off'] },
       { id: 'chord_sound', label: 'Enemy chord sound', default: 'off', values: ['off', 'on'] },
       { id: 'music', label: 'Music', default: 'on', values: ['on', 'off'] },
     ],
+    // Filled in below from the player's library. The hub reads this at LAUNCH,
+    // not at registration, so writing it onto the same object later is enough.
+    availableTracks: [],
     start: startGame,
     stop: stopGame,
-  });
+  };
+  postSpec(spec);
+
+  // Offer the player's own songs as tracks. Entirely best-effort: on a browser
+  // build, an unreachable host, or a library with nothing playable in standard
+  // tuning, the Track row simply does not appear and the game plays its
+  // difficulty pools exactly as before.
+  (async function loadTracks() {
+    try {
+      const lib = await mod('library.js');
+      const songs = await lib.listSongs({ limit: 12 });
+      if (!songs.length) {
+        console.debug('[strum_fighter] no playable songs found in the library');
+        return;
+      }
+      trackList = songs;
+      spec.availableTracks = songs.map((s) => ({
+        id: s.id,
+        title: s.artist ? `${s.title} — ${s.artist}` : s.title,
+      }));
+      console.debug('[strum_fighter] offering', songs.length, 'tracks');
+    } catch (e) {
+      console.debug('[strum_fighter] library unavailable:', e);
+    }
+  })();
 })();
