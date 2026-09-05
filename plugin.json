@@ -1,9 +1,10 @@
 {
   "id": "strum_fighter",
   "name": "Strum Fighter",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "private": false,
   "script": "game.js",
+  "routes": "routes.py",
   "minigame": {
     "title": "Strum Fighter",
     "tagline": "Strum the chord, kill the fighter",

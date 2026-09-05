@@ -3,6 +3,43 @@
 All notable changes to Strum Fighter are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.0] — 2026-09-05
+
+Chord knowledge that is actually kept, and that belongs to the grip rather than
+to the song it was learned in. Both of these came from playing the thing.
+
+### Fixed
+- **Nothing was ever remembered.** Progress went to `localStorage`, which is
+  unusable in at least one real feedBack build — writes appeared to succeed,
+  reads came back empty, and every session started from zero. Worse, it failed
+  *silently*: you drilled chords while the game only pretended to keep score.
+  Progress now goes to the plugin's own backend (`routes.py`) on the same origin
+  that already serves these modules, with `localStorage` kept as a second copy.
+- **A save that fails now says so.** The run summary ends with `Progress saved ✓`
+  or a plain warning that this run will not carry over. Silence was the actual
+  bug; a store that quietly does nothing is indistinguishable from one that works
+  until weeks of practice turn out to be gone.
+
+### Changed
+- **Chord knowledge is keyed by the grip, and shared across every song.** It used
+  to be filed per song, so an `Am` drilled to death in one tune arrived as a
+  stranger in the next. Now the fret positions are the identity: the same shape
+  in another song carries its history straight over, an open C and a barre C at
+  the third fret stay separate (they are two different things to learn), and
+  "Em7" and "E minor 7" merge on their own when the frets match — no name table
+  to maintain. Where a song's grip matches a built-in chord, the built-in name is
+  shown, so a chart that writes "A minor" still reads as `Am`.
+- **Mastery has its own labelled column** in the run summary. It is the only
+  column that carries between runs — Tried and Hit are deliberately per-run — and
+  unlabelled beside the chord name, there was no way to tell.
+
+### Notes
+- The storage format is `v2` and old `v1` data is discarded rather than migrated.
+  Nothing is lost by that: `v1` never successfully stored anything.
+- Verified end to end against the real backend over real HTTP: a chord drilled to
+  mastery in one song is still mastered after a restart, arrives already known in
+  a different song, is scheduled less often, and shows almost no diagram.
+
 ## [0.5.1] — 2026-08-31
 
 ### Added

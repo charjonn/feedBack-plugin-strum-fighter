@@ -29,7 +29,7 @@
   // Bump BUILD with every module change so a normal reload refetches the ES
   // modules (their import URLs are otherwise uncached). Keep in sync with
   // plugin.json "version".
-  const BUILD = '0.5.1';
+  const BUILD = '0.6.0';
   const MODULES = `/api/plugins/${PLUGIN_ID}/assets/modules/`;
   const mod = (name) => import(`${MODULES}${name}?v=${BUILD}`);
   // Three.js is vendored in core (pinned r170); fall back to CDN if absent.
@@ -206,10 +206,20 @@
     // played and drawn exactly as the chart specifies it and never has to be
     // matched against the built-in dictionary.
     const chordBook = new Map();
+    // Grip -> the dictionary's name for it, so a chart that spells a shape
+    // "A minor" still reads as "Am" everywhere the player sees it.
+    const canonicalName = new Map();
+    for (const n of Object.keys(chords.CHORDS)) {
+      canonicalName.set(srsMod.gripKey(chords.CHORDS[n]), n);
+    }
     function addChord(name, frets, fingers) {
       if (!name || chordBook.has(name)) return;
+      const key = srsMod.gripKey(frets);
       chordBook.set(name, {
         name,
+        // What the player is learning is the grip, not the label on it.
+        key,
+        label: canonicalName.get(key) || name,
         notes: chords.notesFromFrets(frets),
         shape: chords.shapeFromFrets(name, frets, fingers),
       });
@@ -258,18 +268,38 @@
 
     // ── Spaced repetition ──
     //
-    // History is kept per song (or per difficulty pool), so drilling one song
-    // does not disturb what the game knows about another. The minigame SDK has
-    // no storage of its own, so this is localStorage — which the module treats
-    // as optional: if it is unavailable or throws, the run simply has no
-    // history rather than no scheduler.
-    const srsKey = song ? `song:${song.id}` : `pool:${difficulty}`;
+    // ONE collection of chord knowledge, keyed by grip, shared across every
+    // song and pool: what your hand learns in one song is the same thing in
+    // the next. It used to be filed per song, which meant an Am you had
+    // drilled to death arrived as a stranger in the next tune.
+    //
+    // Storage goes to the plugin's own backend first (routes.py, same origin
+    // as these modules) with localStorage as a second copy. localStorage alone
+    // turned out to be unusable in at least one real feedBack build — writes
+    // looked fine, reads came back empty, and every session started from zero.
+    const store = srsMod.dualAdapter(
+      srsMod.httpAdapter(PLUGIN_ID),
+      srsMod.localStorageAdapter('strum_fighter:srs:v2'));
     const srs = srsMod.createSrs({
-      chords: chordPool,
-      key: srsKey,
-      storage: srsMod.localStorageAdapter('strum_fighter:srs:v1'),
+      chords: chordPool.map((n) => {
+        const e = chordBook.get(n);
+        return { key: e ? e.key : n, name: e ? e.label : n };
+      }),
+      storage: store,
     });
-    await srs.hydrate();
+    const loadedHistory = await srs.hydrate();
+    console.debug('[strum_fighter] progress store:', loadedHistory ? 'history loaded' : 'starting fresh');
+
+    // Grip -> the name the enemies carry, so a pick can become a fighter.
+    const nameForKey = new Map();
+    for (const n of chordPool) {
+      const e = chordBook.get(n);
+      if (e) nameForKey.set(e.key, n);
+    }
+    const keyOf = (name) => {
+      const e = chordBook.get(name);
+      return e ? e.key : name;
+    };
     // Where the player is deliberately practising, the scheduler picks. A plain
     // scored run without a song keeps its original uniform-random draw, so the
     // default game is unchanged. It still RECORDS everywhere, so the report and
@@ -344,8 +374,9 @@
       // The help you get is the help you need. A chord that keeps slipping
       // away shows its grip almost at once; one you have earned shows barely
       // more than the grid, and fades out gradually rather than snapping off.
-      if (srs.isLeech(e.chordName)) return 1;
-      return Math.min(1, ramp * (2.2 - 2.0 * srs.mastery(e.chordName)));
+      const key = keyOf(e.chordName);
+      if (srs.isLeech(key)) return 1;
+      return Math.min(1, ramp * (2.2 - 2.0 * srs.mastery(key)));
     }
 
     function shapeForLocked(e) {
@@ -454,7 +485,7 @@
       // scheduler and the report know just as fighter kills do.
       const at = performance.now();
       timing.attempt(chordName, at, landed);
-      srs.record(chordName, { isHit: landed, score: result && result.score });
+      srs.record(keyOf(chordName), { isHit: landed, score: result && result.score });
       // The plugin spec forbids synchronous storage on a gameplay path, so
       // this writes occasionally rather than per strum.
       if (srs.shouldSave()) srs.save();
@@ -519,15 +550,19 @@
     }
 
     function spawnNext() {
-      const name = srsPicks
-        ? srs.pick()
-        : chordPool[(Math.random() * chordPool.length) | 0];
+      let name;
+      if (srsPicks) {
+        const key = srs.pick();
+        name = key ? nameForKey.get(key) : null;
+      } else {
+        name = chordPool[(Math.random() * chordPool.length) | 0];
+      }
       if (!name) return;
       enemies.spawn(name);
       spawnedThisWave++;
     }
 
-    function endRun(reason) {
+    async function endRun(reason) {
       if (ended) return;
       ended = true; gameOver = true;
       if (raf) cancelAnimationFrame(raf);
@@ -546,15 +581,18 @@
       const weakest = srs.weakest(3);
       const movement = srs.movement();
 
+      // Save BEFORE building the summary, and report what happened. Progress
+      // disappearing without a word is exactly the bug this replaced: the
+      // player drilled chords while the game only pretended to keep score.
+      const saved = await srs.save();
+      if (!saved) console.warn('[strum_fighter] progress could not be saved');
+
       const summaryHtml = reportMod.buildSummary({
         won, practice, kills, bossKills, accuracy, hullLost: runDamage,
         wave, totalWaves, livery: skin.label, labelMode,
         songTitle: song ? song.title : null,
-        chords: chordRows, weakest, changes, movement,
+        chords: chordRows, weakest, changes, movement, saved,
       });
-
-      // Last chance to keep what this run taught the scheduler.
-      srs.save();
 
       // sdk.end() calls spec.stop() → stopGame() → cleanup(), which disposes
       // all GL/audio resources, so we don't tear down here.
@@ -573,6 +611,7 @@
             ? { from: changes[0].from, to: changes[0].to, medMs: Math.round(changes[0].medMs) }
             : null,
           mastery: movement,
+          progressSaved: saved,
         },
         summaryHtml,
       });

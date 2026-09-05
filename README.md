@@ -104,7 +104,8 @@ which are muted, then the fretted dots — so recall comes first and the answer 
 
 How fast it fills in depends on how well you know that chord. A chord you keep losing shows its
 grip almost immediately; one you've earned shows little more than the grid. That memory is kept
-between runs, per song, so the game picks up where you left off — and fades if you stay away.
+between runs and is tied to the shape rather than to the song, so a chord you learned in one
+tune arrives already known in the next — and fades if you stay away.
 
 ## Practising a song
 
@@ -180,7 +181,7 @@ with `window.slopsmithMinigames`. Entry point `game.js` loads Three.js (vendored
 | `chords.js` | Chord dictionary (name → frets → notes), fingerings + derived shapes, difficulty tiers, boss progressions |
 | `diagram.js` | Chord-box diagrams, drawn progressively (pure geometry + a canvas renderer) |
 | `library.js` | The player's own songs, read from the host API; chord templates → a drillable set |
-| `srs.js` | Spaced repetition over the active chord set (Leitner boxes, weighted selection) |
+| `srs.js` | Spaced repetition over chord grips (Leitner boxes, weighted selection, storage adapters) |
 | `report.js` | Chord-change timing + the end-of-run summary |
 | `skins.js` | XP-gated cockpit liveries + unlock resolution from the profile |
 | `audio-input.js` | Strum-onset detection (`getLevels`) + chord scoring (`scoreChord`) |
@@ -201,9 +202,18 @@ never matched against the built-in dictionary. The chart socket is read once at 
 never in the game loop. Songs are offered through the hub's `availableTracks` slot, which it
 reads at launch, so the list is filled in after registration.
 
-**Spaced repetition** keys history per song (or per difficulty pool). The minigames SDK has no
-storage API, so this is `localStorage` — treated as optional throughout: if it's unavailable or
-throws, the run has no history rather than no scheduler.
+**Spaced repetition** keys knowledge by the **grip** — the fret positions — in one collection
+shared across every song and pool. That is what your hand learns, so the same shape in another
+song carries its history over, while an open C and a barre C stay separate. Naming variants
+merge on their own when the frets match.
+
+**Progress is stored by the plugin's own backend** (`routes.py`), on the same origin that serves
+these modules: `GET`/`PUT /api/plugins/strum_fighter/progress`, persisted under the host's
+`config_dir`. The server stores an opaque blob and knows nothing about the schema, so the two
+halves can never disagree about it. `localStorage` is written as a second copy but is not relied
+on — it is unusable in at least one real feedBack build, where writes appear to succeed and reads
+come back empty. Because that failure mode is invisible, the run summary always states whether
+the save actually landed.
 
 **Liveries** read `sdk.getProfile().unlocks` (game-scoped IDs like `strum_fighter:skin_ace`,
 gated on total profile XP) and re-theme the HUD/tracers/lighting. The Livery modifier picks one;
@@ -233,8 +243,13 @@ The pure modules (`chords`, `diagram`, `srs`, `library`, `report`, `skins`) are 
 `node:test` with no dependencies and no DOM:
 
 ```
-node --test
+node --test           # the JS modules
+python3 tests/test_routes.py   # the progress backend (needs fastapi + httpx)
 ```
+
+The backend tests run the real routes through a real HTTP client rather than mocked request
+objects: the point of that file is that saving genuinely round-trips, and a mock would happily
+agree with a broken implementation.
 
 Two of them are drift guards rather than unit tests: `version.test.js` asserts `BUILD` in
 `game.js` matches `plugin.json`'s version (a mismatch leaves the host serving stale cached

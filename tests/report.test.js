@@ -183,6 +183,37 @@ test('report module', async (t) => {
         assert.ok(buildSummary(null).length > 0);
     });
 
+    await t.test('the summary says whether progress was actually saved', () => {
+        // The bug this exists for: a save that quietly does nothing looks
+        // exactly like one that worked, until weeks of practice are gone.
+        const ok = buildSummary({ kills: 1, accuracy: 50, saved: true });
+        assert.ok(ok.includes('Progress saved'));
+        assert.ok(!ok.includes('could NOT'));
+
+        const failed = buildSummary({ kills: 1, accuracy: 50, saved: false });
+        assert.ok(failed.includes('could NOT be saved'));
+        assert.ok(failed.includes('will not carry over'));
+
+        // Unknown (no storage attempted) says nothing rather than guessing.
+        const silent = buildSummary({ kills: 1, accuracy: 50 });
+        assert.ok(!silent.includes('Progress saved'));
+        assert.ok(!silent.includes('could NOT'));
+    });
+
+    await t.test('mastery gets its own labelled column', () => {
+        // It is the only column that carries between runs, so it has to be
+        // legible as such — it used to hang unlabelled off the chord name.
+        const html = buildSummary({
+            kills: 1, accuracy: 50,
+            chords: [{ name: 'Am', box: 2, seen: 4, hits: 3, change: '0.9s' }],
+        });
+        assert.ok(html.includes('Known'), 'the mastery column needs a header');
+        assert.ok(html.includes('●●●○○'), 'box 2 of 0..4 is three filled pips');
+        // The header row and the body row must have the same column count.
+        const cols = (html.match(/grid-template-columns:([^;]+);/) || [])[1];
+        assert.equal(cols.trim().split(/\s+/).length, 5);
+    });
+
     await t.test('library text reaches the summary as data, not markup', () => {
         assert.equal(esc('<b>&"\''), '&lt;b&gt;&amp;&quot;&#39;');
         assert.equal(esc(null), '');
