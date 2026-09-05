@@ -1,9 +1,10 @@
 {
   "id": "strum_fighter",
   "name": "Strum Fighter",
-  "version": "0.3.4",
+  "version": "0.6.0",
   "private": false,
   "script": "game.js",
+  "routes": "routes.py",
   "minigame": {
     "title": "Strum Fighter",
     "tagline": "Strum the chord, kill the fighter",
@@ -22,8 +23,17 @@
         ]
       },
       {
+        "id": "mode",
+        "label": "Mode",
+        "default": "run",
+        "values": [
+          "run",
+          "practice"
+        ]
+      },
+      {
         "id": "length",
-        "label": "Waves",
+        "label": "Length",
         "default": "normal",
         "values": [
           "short",
@@ -49,6 +59,16 @@
         "values": [
           "on",
           "fade",
+          "off"
+        ]
+      },
+      {
+        "id": "shape",
+        "label": "Chord diagram",
+        "default": "reveal",
+        "values": [
+          "reveal",
+          "on",
           "off"
         ]
       },

@@ -3,6 +3,124 @@
 All notable changes to Strum Fighter are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.0] — 2026-09-05
+
+Chord knowledge that is actually kept, and that belongs to the grip rather than
+to the song it was learned in. Both of these came from playing the thing.
+
+### Fixed
+- **Nothing was ever remembered.** Progress went to `localStorage`, which is
+  unusable in at least one real feedBack build — writes appeared to succeed,
+  reads came back empty, and every session started from zero. Worse, it failed
+  *silently*: you drilled chords while the game only pretended to keep score.
+  Progress now goes to the plugin's own backend (`routes.py`) on the same origin
+  that already serves these modules, with `localStorage` kept as a second copy.
+- **A save that fails now says so.** The run summary ends with `Progress saved ✓`
+  or a plain warning that this run will not carry over. Silence was the actual
+  bug; a store that quietly does nothing is indistinguishable from one that works
+  until weeks of practice turn out to be gone.
+
+### Changed
+- **Chord knowledge is keyed by the grip, and shared across every song.** It used
+  to be filed per song, so an `Am` drilled to death in one tune arrived as a
+  stranger in the next. Now the fret positions are the identity: the same shape
+  in another song carries its history straight over, an open C and a barre C at
+  the third fret stay separate (they are two different things to learn), and
+  "Em7" and "E minor 7" merge on their own when the frets match — no name table
+  to maintain. Where a song's grip matches a built-in chord, the built-in name is
+  shown, so a chart that writes "A minor" still reads as `Am`.
+- **Mastery has its own labelled column** in the run summary. It is the only
+  column that carries between runs — Tried and Hit are deliberately per-run — and
+  unlabelled beside the chord name, there was no way to tell.
+
+### Notes
+- The storage format is `v2` and old `v1` data is discarded rather than migrated.
+  Nothing is lost by that: `v1` never successfully stored anything.
+- Verified end to end against the real backend over real HTTP: a chord drilled to
+  mastery in one song is still mastered after a restart, arrives already known in
+  a different song, is scheduled less often, and shows almost no diagram.
+
+## [0.5.1] — 2026-08-31
+
+### Added
+- **A release zip that installs by unzipping.** A `release` workflow publishes
+  `strum_fighter.zip`, which unpacks to a directory named exactly `strum_fighter`. GitHub's own
+  source zip unpacks to `<repo>-<branch>`, so the obvious "download the zip" route silently
+  produces a plugin the host will never load; this one does not. The workflow runs the tests and
+  checks `BUILD` against the manifest version before publishing, and asserts the archive's
+  top-level directory is right — that being the one thing it exists to get correct.
+- **An installer.** `install.sh` clones or updates the plugin into your plugins directory under
+  the one name the host accepts, finds your AppImage, and writes a `start-feedback.sh` that
+  passes `FEEDBACK_PLUGINS_DIR` through — with `--desktop` for an application-menu entry.
+  Installing by hand had three traps that all fail silently: the directory name must equal the
+  manifest `id` exactly, an AppImage is read-only so the plugin must live outside it, and a
+  desktop icon does not pass the variable to the process.
+
+### Fixed
+- **Songs whose filename contains `#` or `?` silently fell back to the generic pool.** The
+  chart WebSocket URL interpolated the library filename raw, so `Song #1` truncated at the
+  fragment and `Where Is My Mind?` started a query string — the host was asked for a different
+  song, found nothing, and the picked track quietly reverted to the difficulty pool. Path
+  segments are now encoded, separators kept.
+- **The run summary mixed lifetime totals with session timings.** Restored history meant the
+  per-chord Tried/Hit columns counted every previous run, and the table listed chords the
+  player never met this session, while the change times beside them were session-only. The
+  report is now scoped to the run; the mastery pips still show the standing box, which is what
+  the remembered history is for.
+
+## [0.5.0] — 2026-08-31
+
+Learn the shape, not just the letter — and drill a song from your own library.
+
+### Added
+- **Chord diagrams that fill in as you fly.** The locked chord's shape is drawn as a chord box
+  in the HUD, one finger at a time, low string to high — the order you actually place the grip.
+  It opens as an empty grid, then shows which strings are played and muted, then the fretted
+  dots, so you get a beat to recall the chord before the answer arrives. Barres grow in with
+  their strings, and a shape further up the neck captions its base fret. New **Chord diagram**
+  modifier (`reveal` / `on` / `off`).
+- **Song mode.** Pick one of your own songs from the new **Track** row and the run drills its
+  chords: fighters carry them in scheduled order, and the boss wears the song's real progression
+  in playing order, taking a later slice each time so a long song isn't reduced to its opening
+  bars. Chord shapes come from the song's own chart, so you play and see the voicing the song
+  uses. Songs are read from the host's library API — favourites first, then recent — limited to
+  standard tuning and to charts that carry usable chord shapes.
+- **Spaced repetition.** Chords are scheduled by how well you actually know them rather than
+  drawn uniformly: miss one and it returns soon and often, land it cleanly several times and it
+  fades into the background. A miss costs two boxes while a hit earns one, and a scrappy hit
+  only promotes on a second one, so barely scraping through never reads as mastery. History is
+  kept per song (or per difficulty pool) between runs, and decays if you stay away. It drives
+  selection in song and practice mode; a plain scored run keeps its original random draw.
+- **The diagram follows your mastery.** A chord you keep losing shows its grip almost
+  immediately; one you've earned shows little more than the grid. The game gives exactly as much
+  help as you need and takes it back as you stop needing it.
+- **Practice mode.** No hull damage, no waves, no boss — the run is on a clock instead (the
+  Length modifier reads as 2 / 5 / 10 minutes). A wrong chord still flashes and still breaks the
+  combo; it just doesn't end the session you're learning in. New **Mode** modifier.
+- **A report worth reading.** The run summary gains a per-chord table (attempts, hit rate,
+  mastery), your weakest chords, and your slowest chord changes (`Am → F: 2.4s`). Change times
+  count only clean first-attempt hits and are measured from the previously *hit* chord, so they
+  describe real changes rather than the reticle reshuffling.
+
+### Changed
+- **The chord diagram is on by default** (`shape: reveal`). This is the one place where the
+  default run differs from 0.4.x and earlier: the game now teaches the shape rather than only
+  testing the name. `shape: off` restores the previous behaviour exactly.
+- The **Waves** modifier is now labelled **Length**, since it means minutes in practice mode.
+
+### Fixed
+- **Long chord names no longer run off their label.** At 84px even a built-in name like `Cmaj7`
+  overflowed the 256px enemy sprite. Both the sprite label and the HUD's big chord name now
+  shrink to fit — which matters more now that names can come from a chart and be anything.
+
+### Notes
+- Song mode, and the whole library path, is best-effort: a browser build, an unreachable host,
+  or a library with nothing playable leaves the Track row absent and the game plays its
+  difficulty pools exactly as before.
+- Spaced repetition uses `localStorage`, since the minigames SDK exposes no storage API. It is
+  treated as optional: if it's unavailable or throws, the run has no history rather than no
+  scheduler, and it is written between strums rather than on the gameplay path.
+
 ## [0.3.4] — 2026-06-27
 
 ### Fixed

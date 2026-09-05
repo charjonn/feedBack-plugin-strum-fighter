@@ -1,0 +1,97 @@
+name: release
+
+# Publishes a zip that unpacks to a directory named exactly `strum_fighter`.
+#
+# That name is the whole point of this workflow. The host loads a plugin only
+# when the directory name equals the manifest `id`, and GitHub's own source zip
+# unpacks to `<repo>-<branch>` instead — so the obvious "download the zip"
+# route silently produces a plugin the app will never load. This one is
+# installable by unzipping it into a plugins directory, no rename and no
+# terminal.
+
+on:
+  push:
+    tags: ['v*']
+  # So a release can be cut without tagging first — useful for trying it out.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Never publish a broken plugin: a bad zip is worse than no zip, because
+      # it looks installed.
+      - name: Run tests
+        run: node --test
+
+      - name: Read version from the manifest
+        id: manifest
+        run: |
+          version="$(node -p "require('./plugin.json').version")"
+          id="$(node -p "require('./plugin.json').id")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+          # BUILD in game.js must match, or the host serves stale ES modules
+          # after a reload. tests/version.test.js covers this too; failing here
+          # as well keeps a bad build from ever reaching a release asset.
+          build="$(sed -n "s/.*const BUILD = '\([^']*\)'.*/\1/p" game.js | head -n1)"
+          if [ "$build" != "$version" ]; then
+            echo "BUILD ($build) does not match plugin.json version ($version)" >&2
+            exit 1
+          fi
+
+      - name: Build the plugin zip
+        run: |
+          set -euo pipefail
+          id="${{ steps.manifest.outputs.id }}"
+          mkdir -p "dist/$id"
+          # Ship what the host needs plus the licence; leave out the repo
+          # scaffolding a player has no use for. tar rather than rsync: it is
+          # present everywhere, including where this was rehearsed.
+          tar \
+            --exclude='./.git' \
+            --exclude='./.gitattributes' \
+            --exclude='./.gitignore' \
+            --exclude='./.github' \
+            --exclude='./tests' \
+            --exclude='./screenshots' \
+            --exclude='./dist' \
+            -cf - . | tar -xf - -C "dist/$id"
+          (cd dist && zip -qr "$id.zip" "$id")
+          # Prove the top-level directory is right before it ships, since that
+          # is the one thing this workflow exists to get correct.
+          unzip -l "dist/$id.zip" | head -n 10
+          test -f "dist/$id/plugin.json"
+          unzip -l "dist/$id.zip" | grep -q " $id/plugin.json$"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          id="${{ steps.manifest.outputs.id }}"
+          version="${{ steps.manifest.outputs.version }}"
+          tag="${GITHUB_REF_NAME}"
+          # A manual run has no tag to take the name from.
+          if [ "${{ github.ref_type }}" != "tag" ]; then
+            tag="v$version"
+          fi
+          notes="Unzip into your feedBack plugins directory, then start feedBack with
+          \`FEEDBACK_PLUGINS_DIR\` pointing at that directory (or use the
+          \`start-feedback.sh\` the installer writes).
+
+          The archive unpacks to \`$id/\` — the name the host requires. Do not rename it."
+          gh release create "$tag" "dist/$id.zip" \
+            --title "$id $version" \
+            --notes "$notes" \
+            --draft=false \
+            || gh release upload "$tag" "dist/$id.zip" --clobber

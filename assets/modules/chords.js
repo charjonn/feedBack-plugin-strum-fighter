@@ -123,3 +123,117 @@ export function bossWaves(total, bossEvery) {
   for (let w = every; w < total; w += every) set.add(w);
   return set;
 }
+
+// ── Chord shapes (for the on-screen diagram) ──────────────────────────────
+//
+// CHORDS stays a map of plain fret arrays: toNotes() depends on it and
+// tests/chords.test.js asserts the shape. Fretting-hand fingers live here in a
+// parallel table, aligned 1:1 with CHORDS (LOW-E first):
+//   -1 = muted   0 = open (no finger)   1..4 = index/middle/ring/pinky
+// A barre is DERIVED, never authored: finger 1 landing on two or more strings
+// at the same fret is a bar spanning them.
+export const FINGERS = {
+  // ── Open chords ──
+  E:  [0, 2, 3, 1, 0, 0],
+  Em: [0, 2, 3, 0, 0, 0],
+  A:  [-1, 0, 1, 2, 3, 0],
+  Am: [-1, 0, 2, 3, 1, 0],
+  D:  [-1, -1, 0, 1, 3, 2],
+  Dm: [-1, -1, 0, 2, 3, 1],
+  G:  [2, 1, 0, 0, 0, 3],
+  C:  [-1, 3, 2, 0, 1, 0],
+  // ── Barre chords ──
+  F:  [1, 3, 4, 2, 1, 1],
+  Bm: [-1, 1, 3, 4, 2, 1],
+  B:  [-1, 1, 2, 3, 4, 1],
+  Fmaj7: [-1, -1, 3, 2, 1, 0],
+  // ── Seventh chords ──
+  G7:    [3, 2, 0, 0, 0, 1],
+  Cmaj7: [-1, 3, 2, 0, 0, 0],
+  Am7:   [-1, 0, 2, 0, 1, 0],
+  Dm7:   [-1, -1, 0, 3, 1, 1],
+  E7:    [0, 2, 0, 1, 0, 0],
+  A7:    [-1, 0, 2, 0, 3, 0],
+  D7:    [-1, -1, 0, 2, 1, 3],
+};
+
+// Fret array → [{ s, f }] for scoreChord. Same rule as toNotes(), but fed from
+// a raw array so song chord templates (which carry their own frets) can reach
+// the scorer without going through the built-in dictionary.
+export function notesFromFrets(frets) {
+  const notes = [];
+  if (!Array.isArray(frets)) return notes;
+  for (let s = 0; s < frets.length; s++) {
+    if (Number.isInteger(frets[s]) && frets[s] >= 0) notes.push({ s, f: frets[s] });
+  }
+  return notes;
+}
+
+// Everything the diagram renderer needs, derived from frets + fingers.
+//
+// baseFret is COMPUTED, never authored: a shape that fits inside frets 1-4 is
+// drawn against the nut; anything higher shifts the window up and gets an
+// "Nfr" caption instead. All 19 built-in chords take the first branch — the
+// second exists for song chords further up the neck.
+export function shapeFromFrets(name, frets, fingers) {
+  if (!Array.isArray(frets) || !frets.length) return null;
+  const f = frets.map((v) => (Number.isInteger(v) ? v : -1));
+  // Fingers are optional: an unfingered shape still draws, just without digits.
+  const src = Array.isArray(fingers) ? fingers : [];
+  const fg = f.map((fret, s) => {
+    const v = Number.isInteger(src[s]) ? src[s] : (fret < 0 ? -1 : 0);
+    // Never let a finger contradict its fret — a muted string has no finger,
+    // and an open one has no finger either.
+    if (fret < 0) return -1;
+    if (fret === 0) return 0;
+    return v >= 1 && v <= 4 ? v : 0;
+  });
+
+  const fretted = f.filter((v) => v > 0);
+  const maxFret = fretted.length ? Math.max(...fretted) : 0;
+  const minFret = fretted.length ? Math.min(...fretted) : 0;
+  const showNut = !fretted.length || maxFret <= 4;
+  const baseFret = showNut ? 1 : minFret;
+  const fretWindow = Math.max(4, maxFret - baseFret + 1);
+
+  // Barre: the LOWEST fret at which finger 1 holds down two or more strings.
+  let barre = null;
+  const byFret = new Map();
+  for (let s = 0; s < f.length; s++) {
+    if (fg[s] !== 1 || f[s] <= 0) continue;
+    if (!byFret.has(f[s])) byFret.set(f[s], []);
+    byFret.get(f[s]).push(s);
+  }
+  for (const fret of [...byFret.keys()].sort((a, b) => a - b)) {
+    const ss = byFret.get(fret);
+    if (ss.length >= 2) { barre = { fret, fromS: Math.min(...ss), toS: Math.max(...ss), finger: 1 }; break; }
+  }
+
+  const dots = [];
+  for (let s = 0; s < f.length; s++) {
+    if (f[s] <= 0) continue;
+    const inBarre = !!(barre && fg[s] === 1 && f[s] === barre.fret);
+    dots.push({ s, fret: f[s], finger: fg[s], inBarre });
+  }
+
+  return {
+    name: name || '',
+    frets: f,
+    fingers: fg,
+    baseFret,
+    fretWindow,
+    span: fretted.length ? maxFret - minFret + 1 : 0,
+    showNut,
+    muted: f.map((v, s) => (v < 0 ? s : -1)).filter((s) => s >= 0),
+    open: f.map((v, s) => (v === 0 ? s : -1)).filter((s) => s >= 0),
+    dots,
+    barre,
+  };
+}
+
+// Shape for a chord in the built-in dictionary.
+export function shapeOf(name) {
+  const frets = CHORDS[name];
+  if (!frets) return null;
+  return shapeFromFrets(name, frets, FINGERS[name]);
+}

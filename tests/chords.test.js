@@ -99,3 +99,93 @@ test('chords module', async (t) => {
         assert.deepEqual([...bossWaves(6, -1)].sort((a, b) => a - b), [3, 6]);
     });
 });
+
+test('chord shapes', async (t) => {
+    const { CHORDS, FINGERS, shapeOf, shapeFromFrets, notesFromFrets, toNotes } =
+        await import(MOD);
+
+    await t.test('FINGERS covers every chord and never contradicts its frets', () => {
+        assert.deepEqual(Object.keys(FINGERS).sort(), Object.keys(CHORDS).sort());
+        for (const [name, fingers] of Object.entries(FINGERS)) {
+            const frets = CHORDS[name];
+            assert.equal(fingers.length, 6, `${name}: finger count`);
+            for (let s = 0; s < 6; s++) {
+                const fg = fingers[s], f = frets[s];
+                assert.ok(Number.isInteger(fg) && fg >= -1 && fg <= 4, `${name}[${s}]: finger ${fg}`);
+                // A muted string has no finger; an open string has no finger;
+                // a fretted string must name one.
+                assert.equal(fg === -1, f === -1, `${name}[${s}]: muted mismatch`);
+                assert.equal(fg === 0, f === 0, `${name}[${s}]: open mismatch`);
+                if (f > 0) assert.ok(fg >= 1, `${name}[${s}]: fretted string needs a finger`);
+            }
+        }
+    });
+
+    await t.test('shapeOf derives the fret window rather than authoring it', () => {
+        // Every built-in chord fits against the nut.
+        for (const name of Object.keys(CHORDS)) {
+            const s = shapeOf(name);
+            assert.ok(s, `${name}: no shape`);
+            assert.equal(s.baseFret, 1, `${name}: baseFret`);
+            assert.ok(s.showNut, `${name}: showNut`);
+            assert.ok(s.fretWindow >= 4 && s.fretWindow <= 5, `${name}: window ${s.fretWindow}`);
+            assert.equal(s.dots.length, CHORDS[name].filter(f => f > 0).length, `${name}: dot count`);
+            // Dots ascend by string so the reveal order is low-E first.
+            for (let i = 1; i < s.dots.length; i++) {
+                assert.ok(s.dots[i].s > s.dots[i - 1].s, `${name}: dots out of order`);
+            }
+        }
+        assert.equal(shapeOf('nope'), null);
+    });
+
+    await t.test('a shape further up the neck shifts the window instead', () => {
+        const cm = shapeFromFrets('Cm', [-1, 3, 5, 5, 4, 3], [-1, 1, 3, 4, 2, 1]);
+        assert.equal(cm.baseFret, 3);
+        assert.equal(cm.showNut, false);
+        assert.equal(cm.fretWindow, 4);
+        assert.equal(cm.span, 3);
+    });
+
+    await t.test('barres are derived from finger 1 landing twice at one fret', () => {
+        assert.deepEqual(shapeOf('F').barre, { fret: 1, fromS: 0, toS: 5, finger: 1 });
+        assert.deepEqual(shapeOf('Bm').barre, { fret: 2, fromS: 1, toS: 5, finger: 1 });
+        // A two-string mini-barre still counts.
+        assert.deepEqual(shapeOf('Dm7').barre, { fret: 1, fromS: 4, toS: 5, finger: 1 });
+        assert.equal(shapeOf('C').barre, null);
+        assert.equal(shapeOf('D').barre, null);
+        // Dots covered by the bar are marked so the renderer can skip them.
+        const f = shapeOf('F');
+        for (const d of f.dots) assert.equal(d.inBarre, d.finger === 1 && d.fret === 1);
+    });
+
+    await t.test('shapeFromFrets tolerates the junk a song template can carry', () => {
+        // Guitar Pro imports often emit no fingers at all.
+        const s = shapeFromFrets('X', [-1, 0, 2, 2, 2, 0], null);
+        assert.ok(s && s.dots.length === 3);
+        for (const d of s.dots) assert.equal(d.finger, 0);
+        assert.equal(s.barre, null);
+        // A finger that contradicts its fret is dropped, not trusted.
+        const t2 = shapeFromFrets('Y', [-1, -1, 0, 2, 3, 2], [3, 3, 3, 1, 3, 2]);
+        assert.deepEqual(t2.fingers, [-1, -1, 0, 1, 3, 2]);
+        assert.equal(shapeFromFrets('Z', [], []), null);
+        assert.equal(shapeFromFrets('Z', null, null), null);
+    });
+
+    await t.test('shapeOf hands out copies, not the module-internal arrays', () => {
+        const s = shapeOf('C');
+        s.frets[0] = 99;
+        s.fingers[0] = 99;
+        assert.equal(CHORDS.C[0], -1);
+        assert.equal(FINGERS.C[0], -1);
+    });
+
+    await t.test('notesFromFrets matches toNotes but takes a raw array', () => {
+        assert.deepEqual(notesFromFrets(CHORDS.D), toNotes('D'));
+        assert.deepEqual(notesFromFrets(CHORDS.F), toNotes('F'));
+        assert.deepEqual(notesFromFrets([]), []);
+        assert.deepEqual(notesFromFrets(null), []);
+        // Non-integers are skipped rather than reaching the scorer as NaN.
+        assert.deepEqual(notesFromFrets([0, null, 2, undefined, 'x', 1]),
+            [{ s: 0, f: 0 }, { s: 2, f: 2 }, { s: 5, f: 1 }]);
+    });
+});
