@@ -5,6 +5,14 @@ All notable changes to Strum Fighter are documented here. Format follows
 
 ## [0.5.1] — 2026-08-31
 
+### Added
+- **An installer.** `install.sh` clones or updates the plugin into your plugins directory under
+  the one name the host accepts, finds your AppImage, and writes a `start-feedback.sh` that
+  passes `FEEDBACK_PLUGINS_DIR` through — with `--desktop` for an application-menu entry.
+  Installing by hand had three traps that all fail silently: the directory name must equal the
+  manifest `id` exactly, an AppImage is read-only so the plugin must live outside it, and a
+  desktop icon does not pass the variable to the process.
+
 ### Fixed
 - **Songs whose filename contains `#` or `?` silently fell back to the generic pool.** The
   chart WebSocket URL interpolated the library filename raw, so `Song #1` truncated at the

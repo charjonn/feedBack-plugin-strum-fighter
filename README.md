@@ -32,6 +32,43 @@ library.
 
 No `note_detect` dependency — chord scoring is independent of the note-detection plugin.
 
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/charjonn/feedBack-plugin-strum-fighter/main/install.sh | bash
+```
+
+Or, if you would rather read it first — which is the better habit for anything piped into a
+shell:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/charjonn/feedBack-plugin-strum-fighter/main/install.sh
+less install.sh && bash install.sh
+```
+
+Run it again any time to update.
+
+The script exists because installing a feedBack plugin by hand has three traps, and all three
+fail quietly:
+
+- **The directory name must equal the manifest `id` exactly** — `strum_fighter`, not the
+  repository name and not what GitHub's zip unpacks to. Get it wrong and the host simply does
+  not load the plugin: no error, it is just not in the list.
+- **An AppImage is a read-only mount**, so the plugin has to live outside it and be pointed at
+  with `FEEDBACK_PLUGINS_DIR`.
+- **That variable has to reach the feedBack process**, which a desktop icon will not do. The
+  installer writes a `start-feedback.sh` launcher that sets it, and `--desktop` adds an entry
+  to your application menu so you can click instead.
+
+Options: `--branch NAME` (default `main`), `--dir PATH` (default
+`$XDG_DATA_HOME/feedback/plugins`), `--appimage PATH` (autodetected when omitted), `--desktop`.
+
+### By hand
+
+If you would rather not run a script: clone or unzip the repository into your plugins
+directory as a folder named exactly `strum_fighter`, then start feedBack with
+`FEEDBACK_PLUGINS_DIR` pointing at that directory.
+
 ## How to play
 
 1. Open **Minigames** → **Strum Fighter**.
