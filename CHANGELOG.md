@@ -6,6 +6,12 @@ All notable changes to Strum Fighter are documented here. Format follows
 ## [0.5.1] — 2026-08-31
 
 ### Added
+- **A release zip that installs by unzipping.** A `release` workflow publishes
+  `strum_fighter.zip`, which unpacks to a directory named exactly `strum_fighter`. GitHub's own
+  source zip unpacks to `<repo>-<branch>`, so the obvious "download the zip" route silently
+  produces a plugin the host will never load; this one does not. The workflow runs the tests and
+  checks `BUILD` against the manifest version before publishing, and asserts the archive's
+  top-level directory is right — that being the one thing it exists to get correct.
 - **An installer.** `install.sh` clones or updates the plugin into your plugins directory under
   the one name the host accepts, finds your AppImage, and writes a `start-feedback.sh` that
   passes `FEEDBACK_PLUGINS_DIR` through — with `--desktop` for an application-menu entry.

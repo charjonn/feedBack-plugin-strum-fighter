@@ -63,11 +63,27 @@ fail quietly:
 Options: `--branch NAME` (default `main`), `--dir PATH` (default
 `$XDG_DATA_HOME/feedback/plugins`), `--appimage PATH` (autodetected when omitted), `--desktop`.
 
+### Without a terminal
+
+Download `strum_fighter.zip` from the
+[latest release](https://github.com/charjonn/feedBack-plugin-strum-fighter/releases/latest) and
+unzip it into your plugins directory. It unpacks to a folder named `strum_fighter` — the name
+the host requires — so there is nothing to rename. **Do not rename it.**
+
+You still have to start feedBack with `FEEDBACK_PLUGINS_DIR` pointing at that directory, because
+an AppImage is read-only and a desktop icon will not pass the variable through. The `install.sh`
+in the zip writes a launcher that does it for you:
+
+```bash
+bash ~/.local/share/feedback/plugins/strum_fighter/install.sh --desktop
+```
+
 ### By hand
 
-If you would rather not run a script: clone or unzip the repository into your plugins
-directory as a folder named exactly `strum_fighter`, then start feedBack with
-`FEEDBACK_PLUGINS_DIR` pointing at that directory.
+Clone or unzip the repository into your plugins directory as a folder named exactly
+`strum_fighter`, then start feedBack with `FEEDBACK_PLUGINS_DIR` pointing at that directory.
+Note that GitHub's own source zip unpacks to `<repo>-<branch>`, which the host will not load —
+rename it, or use the release zip above.
 
 ## How to play
 
